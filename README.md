@@ -5,15 +5,7 @@ High-performance Luau `Signal` with:
 - O(1) `Disconnect`
 - Node pooling + safe re-entrancy during `Fire`
 
-```lua
-local Signal = require(path.to.Signal)
-
-local sig = Signal.new() -- default: "spawn"
-sig:Connect(function(x)
-	print("got", x)
-end)
-sig:Fire(123)
-```
+See `examples/quickstart.luau` for a couple usage snippets.
 
 ## Docs
 
