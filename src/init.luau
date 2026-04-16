@@ -9,16 +9,13 @@ export type FireMode = "sync" | "defer" | "spawn"
 
 export type Signal<T...> = {
 	Connect: (self: Signal<T...>, fn: (T...) -> (), priority: number?) -> Connection,
-	ConnectWithPriority: (self: Signal<T...>, priority: number, fn: (T...) -> ()) -> Connection,
 	Once: (self: Signal<T...>, fn: (T...) -> (), priority: number?) -> Connection,
 	Wait: (self: Signal<T...>) -> T...,
-	WaitTimeout: (self: Signal<T...>, timeout: number) -> (boolean, T...),
 	Fire: (self: Signal<T...>, T...) -> (),
 	FireSync: (self: Signal<T...>, T...) -> (),
 	FireDeferred: (self: Signal<T...>, T...) -> (),
 	FireSpawn: (self: Signal<T...>, T...) -> (),
 	DisconnectAll: (self: Signal<T...>) -> (),
-	GetConnectionCount: (self: Signal<T...>) -> number,
 	Destroy: (self: Signal<T...>) -> (),
 }
 
@@ -52,13 +49,10 @@ type _Connection<T...> = Connection & {
 	_signal: _Signal<T...>?,
 }
 
--- NOTE: used to clear handler refs on pooled nodes.
 local def = function() end
 
--- FIXME: This debug path started as "temporary" and kinda stayed. Worth keeping?
 local DEBUG = false
 
--- Cached runner coroutine for spawn/defer modes.
 local freeRunnerThread: thread? = nil
 
 local acquireRunnerThreadAndCallEventHandler: ((...any) -> (), ...any) -> ()
@@ -84,7 +78,6 @@ else
 end
 
 local function runEventHandlerInFreeThread()
-	-- Resume with (fn, ...). Yield first so we don't keep "..." on the runner stack.
 	while true do
 		acquireRunnerThreadAndCallEventHandler(coroutine.yield())
 	end
@@ -115,7 +108,6 @@ local function assertAlive<T...>(signal: _Signal<T...>)
 end
 
 local function pushTrash<T...>(signal: _Signal<T...>, node: Node<T...>)
-	-- During Fire we delay recycling so iteration never hits a reused node.
 	node.fn = def :: any
 	node.once = false
 	node.conn = nil :: any
@@ -317,9 +309,6 @@ local function connectInternal<T...>(signal: _Signal<T...>, fn: (T...) -> (), on
 	return conn
 end
 
--- Fire dispatch:
--- - sync: inline (fastest, not yield-safe)
--- - defer/spawn: scheduled (yield-safe via runner cache)
 local function fireSync<T...>(signal: _Signal<T...>, ...: T...)
 	assertAlive(signal)
 	signal._firing += 1
@@ -432,11 +421,6 @@ function Signal:Connect<T...>(fn: (T...) -> (), priority: number?): Connection
 	return connectInternal(s, fn, false, priority or 0)
 end
 
-function Signal:ConnectWithPriority<T...>(priority: number, fn: (T...) -> ()): Connection
-	local s = asSignal(self)
-	return connectInternal(s, fn, false, priority)
-end
-
 function Signal:Once<T...>(fn: (T...) -> (), priority: number?): Connection
 	local s = asSignal(self)
 	return connectInternal(s, fn, true, priority or 0)
@@ -450,35 +434,6 @@ function Signal:Wait<T...>(): T...
 	end)
 
 	return coroutine.yield()
-end
-
-function Signal:WaitTimeout<T...>(timeout: number): (boolean, T...)
-	local thread = coroutine.running()
-	local done = false
-
-	local conn = self:Once(function(...)
-		if done then
-			return
-		end
-		done = true
-		task.spawn(thread, true, ...)
-	end)
-
-	task.delay(timeout, function()
-		if done then
-			return
-		end
-		done = true
-		conn:Disconnect()
-		task.spawn(thread, false)
-	end)
-
-	local yielded = table.pack(coroutine.yield())
-	local ok = yielded[1]
-	if ok == true then
-		return true, (table.unpack(yielded, 2, yielded.n) :: any)
-	end
-	return false
 end
 
 function Signal:Fire<T...>(...: T...)
@@ -523,11 +478,6 @@ function Signal:DisconnectAll<T...>()
 		end
 		cur = nxt
 	end
-end
-
-function Signal:GetConnectionCount<T...>(): number
-	local s = asSignal(self)
-	return s._count
 end
 
 function Signal:Destroy<T...>()
