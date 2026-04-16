@@ -7,38 +7,25 @@ This document describes the public API exported by `src/init.luau`.
 ```lua
 local Signal = require(path.to.Signal)
 
-local sig = Signal.new() -- same as Signal.new("spawn")
-local syncSig = Signal.new("sync")
-local deferSig = Signal.new("defer")
-local spawnSig = Signal.new("spawn")
+local sig = Signal.new()
 ```
 
-### `Signal.new(mode?)`
+### `Signal.new()`
 
-- **Parameters**
-  - `mode`: `"sync" | "defer" | "spawn"` (optional)
 - **Returns**
   - `Signal<T...>`
 - **Notes**
-  - `"sync"` is fastest but **not yield-safe**.
-  - `"spawn"` is the default.
+  - Handlers are dispatched using `task.spawn` via a cached runner coroutine, so yielding handlers are supported.
 
 ## Connecting
 
-### `sig:Connect(fn, priority?) -> Connection`
+### `sig:Connect(fn) -> Connection`
 
 - Connects a handler.
-- `priority` defaults to `0`.
 - **Ordering**
-  - Higher priority runs earlier.
-  - When no non-zero priorities exist, `priority = 0` uses the fast O(1) head-insert path.
+  - New connections run before older ones (`LIFO`), since handlers are inserted at the head of an internal list.
 
-### `sig:ConnectWithPriority(priority, fn) -> Connection`
-
-- Same as `Connect`, but requires an explicit priority.
-- May be **O(n)** due to sorted insertion.
-
-### `sig:Once(fn, priority?) -> Connection`
+### `sig:Once(fn) -> Connection`
 
 - Connects a handler that disconnects itself after the first run.
 
@@ -58,19 +45,7 @@ local spawnSig = Signal.new("spawn")
 
 ### `sig:Fire(...)`
 
-- Dispatches using the mode chosen in `Signal.new`.
-
-### `sig:FireSync(...)`
-
-- Forces synchronous dispatch (inline on the caller thread).
-
-### `sig:FireDeferred(...)`
-
-- Forces deferred dispatch via `task.defer`.
-
-### `sig:FireSpawn(...)`
-
-- Forces spawned dispatch via `task.spawn`.
+- Dispatches handlers using `task.spawn`.
 
 ## Waiting
 
@@ -78,26 +53,12 @@ local spawnSig = Signal.new("spawn")
 
 - Yields the current coroutine until the next `Fire`.
 
-### `sig:WaitTimeout(timeout) -> (boolean, ...)`
-
-- Yields until the next `Fire` or until `timeout` seconds elapse.
-- Returns `(true, ...)` when fired.
-- Returns `(false)` on timeout.
-
 ## Bulk operations / lifecycle
 
 ### `sig:DisconnectAll()`
 
 - Disconnects every current handler.
 - Safe during `Fire` (recycling is deferred until firing completes).
-
-### `sig:GetConnectionCount() -> number`
-
-- O(1) number of active handlers.
-
-### `sig:HasConnections() -> boolean`
-
-- O(1) convenience check (`count > 0`).
 
 ### `sig:Destroy()`
 

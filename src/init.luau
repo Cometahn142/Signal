@@ -5,16 +5,11 @@ export type Connection = {
 	Connected: boolean,
 }
 
-export type FireMode = "sync" | "defer" | "spawn"
-
 export type Signal<T...> = {
-	Connect: (self: Signal<T...>, fn: (T...) -> (), priority: number?) -> Connection,
-	Once: (self: Signal<T...>, fn: (T...) -> (), priority: number?) -> Connection,
+	Connect: (self: Signal<T...>, fn: (T...) -> ()) -> Connection,
+	Once: (self: Signal<T...>, fn: (T...) -> ()) -> Connection,
 	Wait: (self: Signal<T...>) -> T...,
 	Fire: (self: Signal<T...>, T...) -> (),
-	FireSync: (self: Signal<T...>, T...) -> (),
-	FireDeferred: (self: Signal<T...>, T...) -> (),
-	FireSpawn: (self: Signal<T...>, T...) -> (),
 	DisconnectAll: (self: Signal<T...>) -> (),
 	Destroy: (self: Signal<T...>) -> (),
 }
@@ -27,7 +22,6 @@ type Node<T...> = {
 	connected: boolean,
 	once: boolean,
 	conn: _Connection<T...>,
-	priority: number,
 	owner: _Signal<T...>?,
 }
 
@@ -36,12 +30,8 @@ type _Signal<T...> = Signal<T...> & {
 	_tail: Node<T...>?,
 	_pool: Node<T...>?,
 	_trash: Node<T...>?,
-	_count: number,
 	_destroyed: boolean,
-	_mode: FireMode,
-	_fire: (self: _Signal<T...>, T...) -> (),
 	_firing: number,
-	_prioCount: number,
 }
 
 type _Connection<T...> = Connection & {
@@ -51,7 +41,7 @@ type _Connection<T...> = Connection & {
 
 local def = function() end
 
-local DEBUG = false
+local DEBUG = false -- Default 
 
 local freeRunnerThread: thread? = nil
 
@@ -111,7 +101,6 @@ local function pushTrash<T...>(signal: _Signal<T...>, node: Node<T...>)
 	node.fn = def :: any
 	node.once = false
 	node.conn = nil :: any
-	node.priority = 0
 	node.owner = nil
 	local nxt = signal._trash
 	node.freeNext = nxt
@@ -122,7 +111,6 @@ local function recycleNode<T...>(signal: _Signal<T...>, node: Node<T...>)
 	node.fn = def :: any
 	node.once = false
 	node.conn = nil :: any
-	node.priority = 0
 	node.owner = nil
 	node.prev = nil
 	node.next = nil
@@ -149,72 +137,20 @@ local function acquireNode<T...>(signal: _Signal<T...>): Node<T...>
 	fresh.connected = false
 	fresh.once = false
 	fresh.conn = nil
-	fresh.priority = 0
 	fresh.owner = nil
 	return fresh :: Node<T...>
 end
 
 local function insertNode<T...>(signal: _Signal<T...>, node: Node<T...>)
-	if node.priority == 0 and signal._prioCount == 0 then
-		local head = signal._head
-		if head then
-			node.next = head
-			head.prev = node
-			signal._head = node
-			signal._count += 1
-		else
-			signal._head = node
-			signal._tail = node
-			signal._count = 1
-		end
-		return
-	end
-
+	-- Always insert at head (O(1)).
 	local head = signal._head
-	if not head then
-		signal._head = node
-		signal._tail = node
-		signal._count = 1
-		return
-	end
-
-	local pr = node.priority
-	if pr > head.priority then
+	if head then
 		node.next = head
 		head.prev = node
 		signal._head = node
-		signal._count += 1
-		return
-	end
-
-	local tail = signal._tail :: Node<T...>
-	if pr <= tail.priority then
-		tail.next = node
-		node.prev = tail
+	else
+		signal._head = node
 		signal._tail = node
-		signal._count += 1
-		return
-	end
-
-	local cur = head
-	while cur do
-		local nxt = cur.next
-		if not nxt then
-			cur.next = node
-			node.prev = cur
-			signal._tail = node
-			signal._count += 1
-			return
-		end
-		if pr > nxt.priority then
-			node.next = nxt
-			node.prev = cur
-			cur.next = node
-			nxt.prev = node
-			signal._count += 1
-			return
-		end
-		cur = nxt
 	end
 end
 
@@ -235,7 +171,6 @@ local function disconnectNode<T...>(signal: _Signal<T...>, node: Node<T...>)
 	conn._node = nil
 	conn._signal = nil
 
-	local pr = node.priority
 	local prev = node.prev
 	local next = node.next
 	if prev then
@@ -251,10 +186,6 @@ local function disconnectNode<T...>(signal: _Signal<T...>, node: Node<T...>)
 
 	node.owner = nil
 	node.connected = false
-	signal._count -= 1
-	if pr ~= 0 then
-		signal._prioCount -= 1
-	end
 
 	if signal._firing > 0 then
 		pushTrash(signal, node)
@@ -287,82 +218,22 @@ end
 local Signal = {}
 Signal.__index = Signal
 
-local function connectInternal<T...>(signal: _Signal<T...>, fn: (T...) -> (), once: boolean, priority: number): Connection
+local function connectInternal<T...>(signal: _Signal<T...>, fn: (T...) -> (), once: boolean): Connection
 	assertAlive(signal)
 	local node = acquireNode(signal)
 	node.fn = fn
 	node.connected = true
 	node.once = once
-	node.priority = priority
 	node.prev = nil
 	node.next = nil
 	node.freeNext = nil
 	node.owner = signal
-	if priority ~= 0 then
-		signal._prioCount += 1
-	end
 
 	local conn = Connection.new(signal, node)
 	node.conn = conn
 
 	insertNode(signal, node)
 	return conn
-end
-
-local function fireSync<T...>(signal: _Signal<T...>, ...: T...)
-	assertAlive(signal)
-	signal._firing += 1
-	local cur = signal._head
-	while cur do
-		local nxt = cur.next
-		if cur.connected then
-			cur.fn(...)
-			if cur.once then
-				disconnectNode(signal, cur)
-			end
-		end
-		cur = nxt
-	end
-	signal._firing -= 1
-	if signal._firing == 0 then
-		local t = signal._trash
-		signal._trash = nil
-		while t do
-			local nxt = t.freeNext
-			t.freeNext = nil
-			recycleNode(signal, t)
-			t = nxt
-		end
-	end
-end
-
-local function fireDefer<T...>(signal: _Signal<T...>, ...: T...)
-	assertAlive(signal)
-	signal._firing += 1
-	local runner = ensureFreeRunnerThread()
-	local taskDefer = task.defer
-	local cur = signal._head
-	while cur do
-		local nxt = cur.next
-		if cur.connected then
-			taskDefer(runner, cur.fn, ...)
-			if cur.once then
-				disconnectNode(signal, cur)
-			end
-		end
-		cur = nxt
-	end
-	signal._firing -= 1
-	if signal._firing == 0 then
-		local t = signal._trash
-		signal._trash = nil
-		while t do
-			local nxt = t.freeNext
-			t.freeNext = nil
-			recycleNode(signal, t)
-			t = nxt
-		end
-	end
 end
 
 local function fireSpawn<T...>(signal: _Signal<T...>, ...: T...)
@@ -394,36 +265,26 @@ local function fireSpawn<T...>(signal: _Signal<T...>, ...: T...)
 	end
 end
 
-function Signal.new<T...>(mode: FireMode?): Signal<T...>
+function Signal.new<T...>(): Signal<T...>
 	local self = setmetatable({}, Signal) :: any
 	local s = (self :: any) :: _Signal<T...>
 	s._head = nil
 	s._tail = nil
 	s._pool = nil
 	s._trash = nil
-	s._count = 0
 	s._destroyed = false
-	s._mode = mode or "spawn"
-	if s._mode == "sync" then
-		s._fire = fireSync
-	elseif s._mode == "defer" then
-		s._fire = fireDefer
-	else
-		s._fire = fireSpawn
-	end
 	s._firing = 0
-	s._prioCount = 0
 	return self
 end
 
-function Signal:Connect<T...>(fn: (T...) -> (), priority: number?): Connection
+function Signal:Connect<T...>(fn: (T...) -> ()): Connection
 	local s = asSignal(self)
-	return connectInternal(s, fn, false, priority or 0)
+	return connectInternal(s, fn, false)
 end
 
-function Signal:Once<T...>(fn: (T...) -> (), priority: number?): Connection
+function Signal:Once<T...>(fn: (T...) -> ()): Connection
 	local s = asSignal(self)
-	return connectInternal(s, fn, true, priority or 0)
+	return connectInternal(s, fn, true)
 end
 
 function Signal:Wait<T...>(): T...
@@ -438,21 +299,6 @@ end
 
 function Signal:Fire<T...>(...: T...)
 	local s = asSignal(self)
-	s._fire(s, ...)
-end
-
-function Signal:FireSync<T...>(...: T...)
-	local s = asSignal(self)
-	fireSync(s, ...)
-end
-
-function Signal:FireDeferred<T...>(...: T...)
-	local s = asSignal(self)
-	fireDefer(s, ...)
-end
-
-function Signal:FireSpawn<T...>(...: T...)
-	local s = asSignal(self)
 	fireSpawn(s, ...)
 end
 
@@ -462,8 +308,6 @@ function Signal:DisconnectAll<T...>()
 	local cur = s._head
 	s._head = nil
 	s._tail = nil
-	s._count = 0
-	s._prioCount = 0
 	while cur do
 		local nxt = cur.next
 		cur.connected = false
@@ -489,7 +333,6 @@ function Signal:Destroy<T...>()
 	s._destroyed = true
 	s._pool = nil
 	s._trash = nil
-	s._prioCount = 0
 end
 
 return Signal
