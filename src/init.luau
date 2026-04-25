@@ -21,6 +21,7 @@ type Node<T...> = {
 	freeNext: Node<T...>?,
 	connected: boolean,
 	once: boolean,
+	waitThread: thread?,
 	conn: _Connection<T...>,
 	owner: _Signal<T...>?,
 }
@@ -40,6 +41,7 @@ type _Connection<T...> = Connection & {
 }
 
 local def = function() end
+local WAIT_CANCEL_TOKEN = {} :: {}
 
 local DEBUG = false -- Default 
 
@@ -100,6 +102,7 @@ end
 local function pushTrash<T...>(signal: _Signal<T...>, node: Node<T...>)
 	node.fn = def :: any
 	node.once = false
+	node.waitThread = nil
 	node.conn = nil :: any
 	node.owner = nil
 	local nxt = signal._trash
@@ -110,6 +113,7 @@ end
 local function recycleNode<T...>(signal: _Signal<T...>, node: Node<T...>)
 	node.fn = def :: any
 	node.once = false
+	node.waitThread = nil
 	node.conn = nil :: any
 	node.owner = nil
 	node.prev = nil
@@ -136,13 +140,13 @@ local function acquireNode<T...>(signal: _Signal<T...>): Node<T...>
 	fresh.freeNext = nil
 	fresh.connected = false
 	fresh.once = false
+	fresh.waitThread = nil
 	fresh.conn = nil
 	fresh.owner = nil
 	return fresh :: Node<T...>
 end
 
 local function insertNode<T...>(signal: _Signal<T...>, node: Node<T...>)
-	-- Always insert at head (O(1)).
 	local head = signal._head
 	if head then
 		node.next = head
@@ -165,7 +169,7 @@ function Connection.new<T...>(signal: _Signal<T...>, node: Node<T...>): _Connect
 	return raw :: _Connection<T...>
 end
 
-local function disconnectNode<T...>(signal: _Signal<T...>, node: Node<T...>)
+local function disconnectNode<T...>(signal: _Signal<T...>, node: Node<T...>, suppressWaitResume: boolean?)
 	local conn = node.conn
 	conn.Connected = false
 	conn._node = nil
@@ -186,6 +190,11 @@ local function disconnectNode<T...>(signal: _Signal<T...>, node: Node<T...>)
 
 	node.owner = nil
 	node.connected = false
+	local waitThread = node.waitThread
+	node.waitThread = nil
+	if waitThread and not suppressWaitResume then
+		task.spawn(waitThread, WAIT_CANCEL_TOKEN)
+	end
 
 	if signal._firing > 0 then
 		pushTrash(signal, node)
@@ -224,6 +233,7 @@ local function connectInternal<T...>(signal: _Signal<T...>, fn: (T...) -> (), on
 	node.fn = fn
 	node.connected = true
 	node.once = once
+	node.waitThread = nil
 	node.prev = nil
 	node.next = nil
 	node.freeNext = nil
@@ -247,7 +257,7 @@ local function fireSpawn<T...>(signal: _Signal<T...>, ...: T...)
 		if cur.connected then
 			taskSpawn(runner, cur.fn, ...)
 			if cur.once then
-				disconnectNode(signal, cur)
+				disconnectNode(signal, cur, true)
 			end
 		end
 		cur = nxt
@@ -288,13 +298,23 @@ function Signal:Once<T...>(fn: (T...) -> ()): Connection
 end
 
 function Signal:Wait<T...>(): T...
+	local s = asSignal(self)
+	assertAlive(s)
 	local thread = coroutine.running()
 
-	self:Once(function(...)
-		task.spawn(thread, ...)
-	end)
+	local conn = connectInternal(s, function(...)
+		task.spawn(thread, table.pack(...))
+	end, true) :: _Connection<T...>
+	local node = conn._node
+	if node then
+		node.waitThread = thread
+	end
 
-	return coroutine.yield()
+	local yielded = (coroutine.yield() :: any)
+	if yielded == WAIT_CANCEL_TOKEN then
+		error("Signal wait was cancelled", 2)
+	end
+	return table.unpack(yielded, 1, yielded.n)
 end
 
 function Signal:Fire<T...>(...: T...)
@@ -312,6 +332,11 @@ function Signal:DisconnectAll<T...>()
 		local nxt = cur.next
 		cur.connected = false
 		cur.conn.Connected = false
+		local waitThread = cur.waitThread
+		cur.waitThread = nil
+		if waitThread then
+			task.spawn(waitThread, WAIT_CANCEL_TOKEN)
+		end
 		cur.owner = nil
 		cur.conn._node = nil
 		cur.conn._signal = nil
