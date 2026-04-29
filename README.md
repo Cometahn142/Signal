@@ -1,47 +1,43 @@
 # Signal
 
-Signal is a lightweight event library for Luau focused on fast dispatch,
-predictable listener behavior, and straightforward cleanup.
+A high-performance custom event dispatcher for Roblox.
 
-It is meant to replace ad-hoc callback lists with a small, reusable event
-primitive that feels natural in gameplay code.
+메모리 효율이 극대화된 고성능 커스텀 이벤트 시스템입니다.
 
-## Features
+---
 
-- Fast `Connect` and `Fire`
-- One-shot listeners with `Once`
-- Coroutine-friendly `Wait`
-- Cleanup via `DisconnectAll` and `Destroy`
-- Connection objects that expose `Connected`
+## Documentation / 상세 문서
+- [English Documentation](./docs/en/installation.md)
+- [한국어 공식 문서](./docs/kr/installation.md)
 
-## Installation
+---
 
+## Table of Contents / 목차
+- [English](#english)
+- [한국어](#한국어)
+
+---
+
+## English
+
+### Overview
+`Signal` avoids BindableEvent overhead.
+
+### Installation
 ```toml
 [dependencies]
 Signal = "cometahn142/signal@^0.1"
 ```
 
-## Quick Example
+---
 
-```luau
-local Signal = require(Packages.Signal)
+## 한국어
 
-local OnDamage = Signal.new()
-local conn = OnDamage:Connect(function(amount)
-	print("Damage:", amount)
-end)
+### 개요
+`Signal`은 Roblox 기본 이벤트의 성능 한계를 극복합니다.
 
-OnDamage:Fire(25)
-conn:Disconnect()
-OnDamage:Destroy()
+### 설치 방법
+```toml
+[dependencies]
+Signal = "cometahn142/signal@^0.1"
 ```
-
-## Documentation
-
-- [Installation](./docs/installation.md)
-- [Usage Patterns](./docs/usage-patterns.md)
-- [Signal API](./docs/signal.md)
-
-## License
-
-MIT. See `LICENSE`.

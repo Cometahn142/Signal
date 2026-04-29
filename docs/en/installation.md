@@ -11,8 +11,7 @@ If your project already uses Wally:
 Signal = "cometahn142/signal@^0.1"
 ```
 
-Install dependencies through your regular Wally flow, then expose the package
-through Rojo or your project loader.
+Install dependencies through your regular Wally flow, then expose the package through Rojo or your project loader.
 
 ## Method 2: Manual
 
@@ -32,8 +31,7 @@ local Event = Signal.new()
 Event:Destroy()
 ```
 
-If the module requires and the signal constructs successfully, the setup is
-working.
+If the module requires and the signal constructs successfully, the setup is working.
 
 ## Next
 

@@ -9,8 +9,7 @@ local Signal = require(Packages.Signal)
 local OnDamage = Signal.new()
 ```
 
-Signals are best used when you want a reusable event source owned by an object,
-system, or feature.
+Signals are best used when you want a reusable event source owned by an object, system, or feature.
 
 ## Connecting listeners
 
@@ -20,8 +19,7 @@ local conn = OnDamage:Connect(function(amount)
 end)
 ```
 
-Use `Connect` for standard listeners and keep the returned connection when the
-listener has a real lifecycle.
+Use `Connect` for standard listeners and keep the returned connection when the listener has a real lifecycle.
 
 ## One-shot listeners
 
@@ -40,8 +38,7 @@ local amount = OnDamage:Wait()
 print(amount)
 ```
 
-`Wait` is handy for simple coroutine flows, but for longer-lived systems,
-explicit listeners are usually easier to manage.
+`Wait` is handy for simple coroutine flows, but for longer-lived systems, explicit listeners are usually easier to manage.
 
 ## Cleanup
 
