@@ -1,8 +1,9 @@
 [package]
 name = "cometahn142/signal"
 description = "Signal For Roblox"
-version = "0.1.1"
+version = "0.1.2"
 license = "MIT"
+authors = ["Cometahn142"]
 registry = "https://github.com/UpliftGames/wally-index"
 realm = "shared"
 include = ["src", "default.project.json", "LICENSE", "README.md"]
